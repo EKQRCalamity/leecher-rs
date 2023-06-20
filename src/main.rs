@@ -15,7 +15,7 @@ use pretty_bytes::converter::convert;
 
 const MEDIAFIRE: &str =  "https://www.mediafire.com/file/.*/";
 const ANONFILES: &str = "https://anonfiles.com/.*";
-    
+const PIXELDRAIN: &str = "https://pixeldrain.com/.*";
 
 fn read_input(prompt: &str) -> String {
     let mut buffer: String = String::new();
@@ -97,8 +97,51 @@ impl Downloader {
                 Ok(_) => return Ok(true),
                 Err(_e) => return Ok(false),
             }
+        } else if Regex::new(PIXELDRAIN).unwrap().is_match(url) {
+            let r = self.pixeldrain_download(url).await;
+            match r {
+                Ok(_) => return Ok(true),
+                Err(_e) => return Ok(false),
+            }
         } else {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid URL"));
+        }
+    }
+
+    async fn pixeldrain_download(&mut self, url: &str) -> Result<bool, reqwest::Error> {
+        
+        let filekey = url.split('/').last().unwrap();
+
+        let download_link = "https://pixeldrain.com/api/file/".to_string() +  filekey;
+
+        let response = reqwest::get(url).await?;
+        let body = response.text().await?;
+
+        let result = body.lines()
+        .filter_map(|s| {
+            if s.contains("window.viewer_data = ") {
+                s.splitn(2, "=").nth(1)
+            } else {
+                None
+            }
+        }).map(ToString::to_string);
+        let results: Vec<_> = result.collect();
+        let jsonstring = results[0].strip_suffix(";").unwrap();
+        let filename_map = jsonstring.lines().filter_map(|s| {
+            if s.contains("\"name\":\"") {
+                s.split("\"name\":\"").nth(1)?.split("\"").nth(0)
+            } else {
+                None
+            }
+        }).map(ToString::to_string);
+
+        let fn_results: Vec<_> = filename_map.collect();
+        let filename = fn_results[0].as_str();
+
+        let path = r#".\"#.to_string() + filename;
+        match self.download_from_url(&download_link, path.as_str()).await {
+            Ok(_) => return Ok(true),
+            Err(err) => panic!("Error downloading from {} with Error: {}", url, err),
         }
     }
 
@@ -257,9 +300,7 @@ fn handleargs(args: &[String]) -> Args {
     for arg in args {
         if arg == "-q" {
             arguments.quiet = true;
-        } else if Regex::new(MEDIAFIRE).unwrap().is_match(arg.as_str()) {
-            arguments.queue.add_to_queue_str(&arg);
-        } else if Regex::new(ANONFILES).unwrap().is_match(arg.as_str()) {
+        } else if Regex::new(MEDIAFIRE).unwrap().is_match(arg.as_str()) || Regex::new(ANONFILES).unwrap().is_match(arg.as_str()) ||  Regex::new(PIXELDRAIN).unwrap().is_match(arg.as_str()) {
             arguments.queue.add_to_queue_str(&arg);
         }
     }
@@ -268,7 +309,7 @@ fn handleargs(args: &[String]) -> Args {
 
 fn try_parse(input: String) -> bool {
 
-    if Regex::new(MEDIAFIRE).unwrap().is_match(input.as_str()) || Regex::new(ANONFILES).unwrap().is_match(input.as_str()) {
+    if Regex::new(MEDIAFIRE).unwrap().is_match(input.as_str()) || Regex::new(ANONFILES).unwrap().is_match(input.as_str()) || Regex::new(PIXELDRAIN).unwrap().is_match(input.as_str()) {
         return true;
     } else {
         println!("File hoster could not be detected...");
