@@ -1,6 +1,11 @@
 # leecher-rs
 Utility for downloading files from filehosters like Mediafire or Anonfiles automatically, in bulk and in the command line.
 
+# Supports
+ - Anonfiles
+ - Mediafire
+ - Pixeldrain
+
 # Usage
 
 Build it with cargo for your operating system (Only tested on windows!!!).
