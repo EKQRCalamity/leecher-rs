@@ -4,7 +4,7 @@ Utility for downloading files from filehosters like Mediafire or Anonfiles autom
 # Usage
 
 Build it with cargo for your operating system (Only tested on windows!!!).
-Supports pasing links as command line arguments and afterwards when seperated by a space.
+Supports pasting links as command line arguments and after running without arguments when seperated by a space.
 
 # Example:
 
