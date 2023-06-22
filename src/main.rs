@@ -45,7 +45,7 @@ async fn main() {
             std::process::exit(1);
         }
     }
-    let mut downloader = Downloader::new(arguments.queue, 0.0);
+    let mut downloader = Downloader::new(arguments, 0.0);
     match downloader.download().await {
         Ok(_finished) => {
 
@@ -57,28 +57,28 @@ async fn main() {
 }
 
 struct Downloader {
-    queue: Queue,
+    arguments: Args,
     current_progress: f64,
 }
 
 impl Downloader {
-    fn new(queue: Queue, current_progress: f64) -> Downloader {
-        return Downloader { queue: queue, current_progress: current_progress};
+    fn new(arguments: Args, current_progress: f64) -> Downloader {
+        return Downloader { arguments: arguments, current_progress: current_progress};
     }
 
     async fn download(&mut self) -> io::Result<bool> {
         loop {
-            if self.queue.completed() {
+            if self.arguments.queue.completed() {
                 break;
             } else {
-                let item = self.queue.get_current_item();
+                let item = self.arguments.queue.get_current_item();
                 match self.download_from_url_host(item.to_string().as_str()).await {
                     Ok(_finished) => {
-                        println!("\nDownload finished.");
+                        if !self.arguments.quiet {println!("\nDownload finished.");}
                     },
                     Err(err) => println!("{}", err),
                 }
-                self.queue.next();
+                self.arguments.queue.next();
             }
         }
         return Ok(true);
@@ -158,9 +158,7 @@ impl Downloader {
             .attr("href")
             .expect("href not found")
             .to_string();
-            println!(
-                "Download link found!"
-            );
+            if !self.arguments.quiet {println!("Download link found!");}
         }
         let path = r#".\"#.to_string() + download_link.split("/").last().expect("File name not found.").to_string().as_str();
         match self.download_from_url(&download_link, path.as_str()).await {
@@ -184,9 +182,7 @@ impl Downloader {
             .attr("href")
             .expect("href not found")
             .to_string();
-            println!(
-                "Download link found!"
-            );
+            if !self.arguments.quiet {println!("Download link found!");}
         }
         let path = r#".\"#.to_string() + download_link.split("/").last().expect("File name not found.").to_string().as_str();
         match self.download_from_url(&download_link, path.as_str()).await {
@@ -211,7 +207,7 @@ impl Downloader {
             let mut file = File::create(temp_path.as_str()).or(Err(format!("Failed to create file {}", temp_path)))?;
             let mut stream = response.bytes_stream();
             
-            println!("Starting download of {}", path.split("\\").last().unwrap());
+            if !self.arguments.quiet {println!("Starting download of {}", path.split("\\").last().unwrap());}
             
             use std::time::Instant;
 
@@ -250,15 +246,15 @@ impl Downloader {
 struct Queue {
     files: Vec<String>,
     index: usize,
+    quiet: bool,
 }
 
 impl Queue {
-    fn new(files: Vec<String>) -> Queue {
-        return Queue { files: files, index: 0 };
+    fn new(files: Vec<String>, quiet:bool) -> Queue {
+        return Queue { files: files, index: 0, quiet: quiet};
     }
 
     fn completed(&self) -> bool {
-        println!("Files: {} - Index: {}", self.files.len(), self.index);
         return self.files.len() < self.index + 1;
     }
 
@@ -268,7 +264,7 @@ impl Queue {
 
     fn next(&mut self) {
         if self.index + 1 >= self.files.len() {
-            println!("Reached end of queue.");
+            if !self.quiet { println!("Reached end of queue."); }
             std::process::exit(1);
         } else {
             self.index = self.index + 1;
@@ -296,10 +292,11 @@ impl Args {
 }
 
 fn handleargs(args: &[String]) -> Args {
-    let mut arguments = Args::new(Queue::new(Vec::new()), false);
+    let mut arguments = Args::new(Queue::new(Vec::new(), false), false);
     for arg in args {
         if arg == "-q" {
             arguments.quiet = true;
+            arguments.queue.quiet = true;
         } else if Regex::new(MEDIAFIRE).unwrap().is_match(arg.as_str()) || Regex::new(ANONFILES).unwrap().is_match(arg.as_str()) ||  Regex::new(PIXELDRAIN).unwrap().is_match(arg.as_str()) {
             arguments.queue.add_to_queue_str(&arg);
         }
