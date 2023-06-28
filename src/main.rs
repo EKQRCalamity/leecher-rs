@@ -3,13 +3,14 @@ mod progress;
 use regex::Regex;
 use progress::{ProgressBar};
 use futures_util::StreamExt;
-use std::{fs::File, io::BufReader};
+use std::{fs::File, io::BufReader, io::BufWriter};
 use scraper::{Html, Selector};
 use std::io::Write;
 use std::io;
 use std::io::Read;
 use tokio;
 extern crate pretty_bytes;
+use reqwest::Client;
 
 use pretty_bytes::converter::convert;
 
@@ -85,9 +86,8 @@ impl Downloader {
             if self.arguments.directqueue.completed() {
                 break;
             } else {
-                let item = self.arguments.directqueue.get_current_item();
+                let mut item = self.arguments.directqueue.get_current_item();
                 let mut path = String::new();
-                let mut temp = "";
                 if item.contains("[") {
                     let filename = match item.split("[").last() {
                         Some(some) => some,
@@ -95,6 +95,7 @@ impl Downloader {
                             "Unknownfile"
                         }
                     };
+                    item = item.split("[").nth(0).unwrap();
                     path = r#".\"#.to_string() + filename.replace("]", "").to_string().as_str();
                 } else {
                     path = r#".\"#.to_string() + item.replace("/", "_").replace(":", ".").as_str();
@@ -220,53 +221,54 @@ impl Downloader {
     }
 
     async fn download_from_url(&mut self, url: &str, path: &str) -> Result<bool, String> {
-            let response = reqwest::get(url).await
-                            .or(Err(format!("Failed to get response from url: {}", url)))?;
-            let total_size = response.content_length().expect("Failed to get total size from response.");
-            
-            let suffix = "]".to_string();
-            self.current_progress = 0.0;
-            let temp_path = path.to_string() + ".temp";
-            
-            let mut progress = ProgressBar::new("[".to_string(), suffix.as_str().to_string(), "#".to_string(), "~".to_string(), 0.0, total_size as f64);
-            
-            
-            let mut file = File::create(temp_path.as_str()).or(Err(format!("Failed to create file {}", temp_path)))?;
-            let mut stream = response.bytes_stream();
-            
-            if !self.arguments.quiet {println!("Starting download of {}", path.split("\\").last().unwrap());}
-            
-            use std::time::Instant;
-
-            let now = Instant::now();
-            while let Some(bytes) = stream.next().await {
-                let chunk = bytes.or(Err(format!("Failed to read chunk from stream...")))?;
-                file.write_all(&chunk)
-                    .or(Err(format!("Failed to write to new file {}", temp_path)))?;
-                self.current_progress = self.current_progress + (chunk.len() as f64);
-                match progress.show() {
-                    Ok(_finished) => {
-                        progress.suffix = suffix.as_str().to_string() + format!(" {}/{} - {:.2}MB/s -", convert(self.current_progress), convert(progress.progress_obj.max_value), ((self.current_progress / 1000000.0 ) / now.elapsed().as_secs() as f64)).as_str();
-                        progress.update_progress(self.current_progress);
-                    },
-                    Err(err) => { panic!("{}", err) }
+        let client = Client::new();
+        let response = client.get(url).send().await
+            .or(Err(format!("Failed to get response from URL: {}", url)))?;
+    
+        let total_size = response.content_length().ok_or("Failed to get total size from response")?;
+        let suffix = "]".to_string();
+        let temp_path = path.to_string() + ".temp";
+    
+        let mut progress = ProgressBar::new("[".to_string(), suffix.as_str().to_string(), "#".to_string(), "~".to_string(), 0.0, total_size as f64);
+    
+        let mut file = BufWriter::new(File::create(&temp_path).map_err(|e| format!("Failed to create file {}: {}", temp_path, e))?);
+        let mut stream = response.bytes_stream();
+    
+        if !self.arguments.quiet {
+            println!("Starting download of {}", path.split("\\").last().unwrap());
+        }
+    
+        use std::time::Instant;
+        let now = Instant::now();
+    
+        while let Some(bytes) = stream.next().await {
+            let chunk = bytes.map_err(|e| format!("Failed to read chunk from stream: {}", e))?;
+            file.write_all(&chunk)
+                .map_err(|e| format!("Failed to write to new file {}: {}", temp_path, e))?;
+            self.current_progress += chunk.len() as f64;
+            match progress.show() {
+                Ok(_) => {
+                    progress.suffix = suffix.clone() + format!(
+                        " {}/{} - {:.2}MB/s -",
+                        convert(self.current_progress),
+                        convert(progress.progress_obj.max_value),
+                        ((self.current_progress / 1000000.0) / now.elapsed().as_secs() as f64)
+                    )
+                    .as_str();
+                    progress.update_progress(self.current_progress);
                 }
+                Err(err) => panic!("{}", err),
             }
-
-            progress.show().unwrap();
-            drop(file);
-
-            let mut final_file = File::create(path).or(Err(format!("Failed to create file {}", path)))?;
-            let f = File::open(path).or(Err(format!("Failed to open file {}", path)))?;
-            let mut reader = BufReader::new(f);
-            let mut buffer = Vec::new();
-
-            reader.read_to_end(&mut buffer).or(Err(format!("Failed to read to buffer.")))?;
-            final_file.write_all(&buffer)
-            .or(Err(format!("Failed to write to new file {}", path)))?;
-
-            std::fs::remove_file(temp_path).or(Err(format!("Failed to remove temporary file {}", path)))?;
-            return Ok(true);
+        }
+    
+        progress.show().unwrap();
+    
+        file.flush().map_err(|e| format!("Failed to flush buffer to file {}: {}", temp_path, e))?;
+        drop(file);
+    
+        std::fs::rename(&temp_path, path).map_err(|e| format!("Failed to rename file from {} to {}: {}", temp_path, path, e))?;
+    
+        Ok(true)
     }
 }
 
@@ -321,7 +323,8 @@ impl Args {
 
 fn handleargs(args: &[String]) -> Args {
     let mut arguments = Args::new(Queue::new(Vec::new(), false), false);
-    for arg in args {
+    let newargs = &args[1..];
+    for arg in newargs {
         if arg == "-q" {
             arguments.quiet = true;
             arguments.queue.quiet = true;
