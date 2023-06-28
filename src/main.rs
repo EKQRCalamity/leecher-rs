@@ -81,6 +81,33 @@ impl Downloader {
                 self.arguments.queue.next();
             }
         }
+        loop {
+            if self.arguments.directqueue.completed() {
+                break;
+            } else {
+                let item = self.arguments.directqueue.get_current_item();
+                let mut path = String::new();
+                let mut temp = "";
+                if item.contains("[") {
+                    let filename = match item.split("[").last() {
+                        Some(some) => some,
+                        None => {
+                            "Unknownfile"
+                        }
+                    };
+                    path = r#".\"#.to_string() + filename.replace("]", "").to_string().as_str();
+                } else {
+                    path = r#".\"#.to_string() + item.replace("/", "_").replace(":", ".").as_str();
+                }
+                match self.download_from_url(item.to_string().as_str(), &path).await {
+                    Ok(_finished) => {
+                        if !self.arguments.quiet {println!("\nDownload finished.");}
+                    },
+                    Err(err) => println!("{}", err),
+                }
+                self.arguments.directqueue.next();
+            }
+        }
         return Ok(true);
     }
 
@@ -281,13 +308,14 @@ impl Queue {
 }
 
 struct Args {
+    directqueue: Queue,
     queue: Queue,
     quiet: bool,
 }
 
 impl Args {
     fn new(queue: Queue, quiet: bool) -> Args {
-        return Args { queue: queue, quiet: quiet};
+        return Args { queue: queue, quiet: quiet, directqueue: Queue::new(Vec::new(), false) };
     }
 }
 
@@ -297,8 +325,11 @@ fn handleargs(args: &[String]) -> Args {
         if arg == "-q" {
             arguments.quiet = true;
             arguments.queue.quiet = true;
+            arguments.directqueue.quiet = true;
         } else if Regex::new(MEDIAFIRE).unwrap().is_match(arg.as_str()) || Regex::new(ANONFILES).unwrap().is_match(arg.as_str()) ||  Regex::new(PIXELDRAIN).unwrap().is_match(arg.as_str()) {
             arguments.queue.add_to_queue_str(&arg);
+        } else {
+            arguments.directqueue.add_to_queue_str(&arg);
         }
     }
     return arguments;
