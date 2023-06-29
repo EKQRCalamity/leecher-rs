@@ -3,11 +3,10 @@ mod progress;
 use regex::Regex;
 use progress::{ProgressBar};
 use futures_util::StreamExt;
-use std::{fs::File, io::BufReader, io::BufWriter};
+use std::{fs::File, io::BufWriter};
 use scraper::{Html, Selector};
 use std::io::Write;
 use std::io;
-use std::io::Read;
 use tokio;
 extern crate pretty_bytes;
 use reqwest::Client;
@@ -86,21 +85,8 @@ impl Downloader {
             if self.arguments.directqueue.completed() {
                 break;
             } else {
-                let mut item = self.arguments.directqueue.get_current_item();
-                let mut path = String::new();
-                if item.contains("[") {
-                    let filename = match item.split("[").last() {
-                        Some(some) => some,
-                        None => {
-                            "Unknownfile"
-                        }
-                    };
-                    item = item.split("[").nth(0).unwrap();
-                    path = r#".\"#.to_string() + filename.replace("]", "").to_string().as_str();
-                } else {
-                    path = r#".\"#.to_string() + item.replace("/", "_").replace(":", ".").as_str();
-                }
-                match self.download_from_url(item.to_string().as_str(), &path).await {
+                let item = self.arguments.directqueue.get_current_item();
+                match self.download_from_url(item.to_string().as_str(), None).await {
                     Ok(_finished) => {
                         if !self.arguments.quiet {println!("\nDownload finished.");}
                     },
@@ -167,7 +153,7 @@ impl Downloader {
         let filename = fn_results[0].as_str();
 
         let path = r#".\"#.to_string() + filename;
-        match self.download_from_url(&download_link, path.as_str()).await {
+        match self.download_from_url(&download_link, Some(path)).await {
             Ok(_) => return Ok(true),
             Err(err) => panic!("Error downloading from {} with Error: {}", url, err),
         }
@@ -188,8 +174,7 @@ impl Downloader {
             .to_string();
             if !self.arguments.quiet {println!("Download link found!");}
         }
-        let path = r#".\"#.to_string() + download_link.split("/").last().expect("File name not found.").to_string().as_str();
-        match self.download_from_url(&download_link, path.as_str()).await {
+        match self.download_from_url(&download_link, None).await {
             Ok(_) => return Ok(true),
             Err(err) => panic!("Error downloading from {} with Error: {}", url, err),
         }
@@ -212,19 +197,23 @@ impl Downloader {
             .to_string();
             if !self.arguments.quiet {println!("Download link found!");}
         }
-        let path = r#".\"#.to_string() + download_link.split("/").last().expect("File name not found.").to_string().as_str();
-        match self.download_from_url(&download_link, path.as_str()).await {
+        match self.download_from_url(&download_link, None).await {
             Ok(_) => return Ok(true),
             Err(err) => panic!("Error downloading from {} with {}", url, err),
         }
         
     }
 
-    async fn download_from_url(&mut self, url: &str, path: &str) -> Result<bool, String> {
+    async fn download_from_url(&mut self, url: &str, _path: Option<String>) -> Result<bool, String> {
         let client = Client::new();
         let response = client.get(url).send().await
             .or(Err(format!("Failed to get response from URL: {}", url)))?;
-    
+        let download_link = &response.url().to_string().split("/").last().expect("File name not found.").to_string();
+
+        let mut path = r#".\"#.to_string() + download_link;
+        if let Some(p) = _path {
+            path = p;
+        } 
         let total_size = response.content_length().ok_or("Failed to get total size from response")?;
         let suffix = "]".to_string();
         let temp_path = path.to_string() + ".temp";
@@ -266,7 +255,7 @@ impl Downloader {
         file.flush().map_err(|e| format!("Failed to flush buffer to file {}: {}", temp_path, e))?;
         drop(file);
     
-        std::fs::rename(&temp_path, path).map_err(|e| format!("Failed to rename file from {} to {}: {}", temp_path, path, e))?;
+        std::fs::rename(&temp_path, &path).map_err(|e| format!("Failed to rename file from {} to {}: {}", temp_path, path, e))?;
     
         Ok(true)
     }
